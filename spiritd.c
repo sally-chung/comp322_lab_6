@@ -10,54 +10,38 @@
 
 // terminal > parentp > childp
 
-void daemonp(const char *cmd);
-void signal_handler(int signum);
+pid_t mole;
 
-int main() {
-    signal(SIGTERM, signal_handler);
 
-    return 0;
-}
+void term_signal_handler(int signum);
+void usr_signal_handler(int signum);
 
-void daemonp(const char *cmd)
+int main()
 {
     pid_t pid = 0;
     pid_t sid = 0;
     int i, fd0, fd1, fd2;
     struct rlimit r_lim;
-    struct sigaction sig_act;
 
     // clear file creation mask
     umask(0);
 
+    pid = fork();
+
     // become a session leader to lose control TTY
     // call fork and have parent exit
-    /* if ((pid = fork()) < 0)
-        err_quit("%s: can't fork", cmd);
-    else */
-    if (pid != 0) //parent
-        exit(0);
+    if (pid > 0) //parent
+        exit(EXIT_SUCCESS);
 
     //creates a new session
     setsid();
-
-    // ensure future opens won't allocate controlling TTYs
-    sig_act.sa_handler = SIG_IGN;
-    sigemptyset(&sig_act.sa_mask);
-    sig_act.sa_flags = 0;
-    /* if (sigaction(SIGHUP, &sa, NULL) < 0)
-        err_quit("%s: can't ignore SIGHUP", cmd);
-    if ((pid = fork()) < 0)
-        err_quit("%s: can't fork", cmd);
-    else */
-    if (pid != 0) // parent
-        exit(0);
 
     // change working directory to the root directory
     /* if (chdir("/") < 0)
         err_quit("%s: can't change directory to /", cmd); */
 
     // unneeded file descriptors should be closed
+    getrlimit(RLIMIT_NOFILE, &r_lim);
     if (r_lim.rlim_max == RLIM_INFINITY)
         r_lim.rlim_max = 1024;
     for (i = 0; i < r_lim.rlim_max; i++)
@@ -70,29 +54,44 @@ void daemonp(const char *cmd)
     fd1 = dup(0);
     fd2 = dup(0);
 
-    //initialize the log file
-    openlog(cmd, LOG_CONS, LOG_DAEMON);
-    if (fd0 != 0 || fd1 != 1 || fd2 != 2)
-    {
-        syslog(LOG_ERR, "unexpected file descriptors %d %d %d", fd0, fd1, fd2);
-        exit(1);
-    }
+    signal(SIGTERM, term_signal_handler);
+    signal(SIGUSR1, usr_signal_handler);
+    signal(SIGUSR2, usr_signal_handler);
+
+    mole = pid;
 }
 
-void signal_handler(int signum)
+void usr_signal_handler(int signum)
 {
-    switch(signum) {
-        case SIGTERM:
-        // shut down any and all child of the daemon process then exit
-            break;
-        case SIGUSR1:
-        // terminate child process #1 and spawn a new child process
-            break;
-        case SIGUSR2:
-        // terminate child process #2 and spawn a new child process
-            break;
+    if (mole == 0)
+    {
+        char *mole_name;
+        char *write_path[3];
 
-        // when your system is running properly, you will have at most
-        // three process running: the daemon and the one child 
+        int rand_num = rand() % 2;
+
+        // char buffer[1024];
+        // char *path_name = getcwd(buffer, 1024);
+        // strcat(path_name, "/mole");
+        write_path[0] = "/mole";
+
+        if (rand_num == 1)
+            mole_name = "mole1";
+        else
+            mole_name = "mole2";
+
+        write_path[1] = mole_name;
+        write_path[2] = NULL;
+        execv(write_path[0], write_path);
     }
 }
+void term_signal_handler(int signum)
+{
+    // shut down any and all child of the daemon process then exit
+    if (mole != 0)
+        kill(mole, SIGKILL); // current child process killed
+    kill(getpid(), SIGKILL); // kill daemon
+}
+
+// when your system is running properly, you will have at most
+// three process running: the daemon and the one child
